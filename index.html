@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>本格オセロ - CPU Lv10 & Animation</title>
+    <style>
+        :root { --cell-size: 60px; --board-color: #2e7d32; --hint-color: rgba(255, 255, 255, 0.2); }
+        body { display: flex; flex-direction: column; align-items: center; font-family: 'Segoe UI', sans-serif; background: #2c3e50; color: white; padding-top: 20px; }
+        
+        .score-board { display: flex; gap: 20px; margin-bottom: 15px; }
+        .score-item { 
+            display: flex; align-items: center; gap: 10px; padding: 10px 25px;
+            background: #34495e; border-radius: 50px; font-size: 1.5rem; font-weight: bold;
+            box-shadow: 0 4px 0 #22303e;
+        }
+        .dot { width: 22px; height: 22px; border-radius: 50%; }
+        .dot.black { background: #000; border: 1px solid #555; }
+        .dot.white { background: #fff; border: 1px solid #ccc; }
+
+        .controls { margin-bottom: 20px; background: #34495e; padding: 15px; border-radius: 12px; text-align: center; }
+        select, button { padding: 8px 12px; border-radius: 5px; border: none; cursor: pointer; font-weight: bold; }
+        #status { margin-bottom: 10px; font-size: 1rem; color: #bdc3c7; }
+        
+        #board {
+            display: grid; grid-template-columns: repeat(8, var(--cell-size));
+            grid-template-rows: repeat(8, var(--cell-size));
+            background-color: #1b5e20; border: 6px solid #144317; gap: 2px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .cell {
+            width: var(--cell-size); height: var(--cell-size);
+            background-color: var(--board-color); display: flex; justify-content: center; align-items: center;
+            position: relative; cursor: pointer;
+        }
+        .hint::after { content: ''; width: 14px; height: 14px; background: var(--hint-color); border-radius: 50%; }
+
+        /* 石のアニメーション */
+        .piece-container {
+            width: 85%; height: 85%; position: relative;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-style: preserve-3d;
+        }
+        .piece-container.flipped { transform: rotateY(180deg); }
+
+        .piece-front, .piece-back {
+            position: absolute; width: 100%; height: 100%;
+            border-radius: 50%; backface-visibility: hidden;
+            box-shadow: 0 4px 4px rgba(0,0,0,0.3);
+        }
+        .piece-front.black, .piece-back.black { background: #212121; }
+        .piece-front.white, .piece-back.white { background: #ffffff; transform: rotateY(180deg); }
+    </style>
+</head>
+<body>
+
+    <div class="score-board">
+        <div class="score-item"><div class="dot black"></div><span id="black-score">2</span></div>
+        <div class="score-item"><div class="dot white"></div><span id="white-score">2</span></div>
+    </div>
+
+    <div class="controls">
+        <div id="status">準備中...</div>
+        Lv: <select id="lv-select">
+            <script>for(let i=1;i<=10;i++) document.write(`<option value="${i}">Level ${i}</option>`)</script>
+        </select>
+        対戦: <select id="mode-select">
+            <option value="pvc">VS CPU</option>
+            <option value="pvp">対人戦</option>
+        </select>
+        <button onclick="initGame()" style="background:#e74c3c; color:white;">RESET</button>
+    </div>
+
+    <div id="board"></div>
+
+    <script>
+        const boardElement = document.getElementById('board');
+        const statusElement = document.getElementById('status');
+        const blackScoreElement = document.getElementById('black-score');
+        const whiteScoreElement = document.getElementById('white-score');
+        
+        let board = [];
+        let currentPlayer = 1;
+        let isLock = false;
+
+        // 盤面の重みづけ (Lvが高いほどここを重視する)
+        const WEIGHTS = [
+            [ 100, -20,  10,   5,   5,  10, -20, 100],
+            [ -20, -50,  -2,  -2,  -2,  -2, -50, -20],
+            [  10,  -2,   5,   1,   1,   5,  -2,  10],
+            [   5,  -2,   1,   0,   0,   1,  -2,   5],
+            [   5,  -2,   1,   0,   0,   1,  -2,   5],
+            [  10,  -2,   5,   1,   1,   5,  -2,  10],
+            [ -20, -50,  -2,  -2,  -2,  -2, -50, -20],
+            [ 100, -20,  10,   5,   5,  10, -20, 100]
+        ];
+
+        function initGame() {
+            board = Array(8).fill().map(() => Array(8).fill(0));
+            board[3][3] = 2; board[3][4] = 1;
+            board[4][3] = 1; board[4][4] = 2;
+            currentPlayer = 1; isLock = false;
+            updateUI();
+        }
+
+        function updateUI() {
+            boardElement.innerHTML = '';
+            const validMoves = getAllValidMoves(currentPlayer);
+            let bCount = 0, wCount = 0;
+
+            board.forEach((row, r) => {
+                row.forEach((cell, c) => {
+                    if (cell === 1) bCount++; if (cell === 2) wCount++;
+                    const div = document.createElement('div');
+                    div.className = 'cell';
+                    if (validMoves.some(m => m.r === r && m.c === c) && !isLock) div.classList.add('hint');
+                    div.onclick = () => handleCellClick(r, c);
+                    
+                    if (cell !== 0) {
+                        const container = document.createElement('div');
+                        container.className = 'piece-container' + (cell === 2 ? ' flipped' : '');
+                        container.innerHTML = `<div class="piece-front black"></div><div class="piece-back white"></div>`;
+                        div.appendChild(container);
+                    }
+                    boardElement.appendChild(div);
+                });
+            });
+
+            blackScoreElement.textContent = bCount;
+            whiteScoreElement.textContent = wCount;
+
+            if (validMoves.length === 0) {
+                if (getAllValidMoves(3 - currentPlayer).length === 0) {
+                    statusElement.textContent = "ゲーム終了！";
+                    return;
+                }
+                statusElement.textContent = "パスします";
+                setTimeout(() => { currentPlayer = 3 - currentPlayer; updateUI(); }, 800);
+            } else {
+                statusElement.textContent = `${currentPlayer === 1 ? '黒' : '白'}の番です`;
+                if (document.getElementById('mode-select').value === 'pvc' && currentPlayer === 2 && !isLock) {
+                    isLock = true;
+                    setTimeout(cpuMove, 1000);
+                }
+            }
+        }
+
+        function handleCellClick(r, c) {
+            if (isLock || board[r][c] !== 0) return;
+            const flips = getFlipTargets(r, c, currentPlayer);
+            if (flips.length === 0) return;
+            executeMove(r, c, flips);
+        }
+
+        function executeMove(r, c, flips) {
+            board[r][c] = currentPlayer;
+            flips.forEach(([fr, fc]) => board[fr][fc] = currentPlayer);
+            currentPlayer = 3 - currentPlayer;
+            isLock = false;
+            updateUI();
+        }
+
+        function cpuMove() {
+            const moves = getAllValidMoves(2);
+            if (moves.length === 0) return;
+
+            const lv = parseInt(document.getElementById('lv-select').value);
+            
+            // Lvに応じた評価スコア計算
+            moves.forEach(m => {
+                let score = m.flips.length; // 基本は「取れる数」
+                const weight = WEIGHTS[m.r][m.c];
+                
+                // Lv10に近づくほど、場所の良さ（WEIGHTS）を極端に重視する
+                score += weight * (lv * 0.5); 
+                
+                // Lvが高い場合、ランダム要素を減らす
+                score += (Math.random() * (11 - lv)); 
+                m.score = score;
+            });
+
+            moves.sort((a, b) => b.score - a.score);
+            executeMove(moves[0].r, moves[0].c, moves[0].flips);
+        }
+
+        function getAllValidMoves(color) {
+            let moves = [];
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    if (board[r][c] === 0) {
+                        const flips = getFlipTargets(r, c, color);
+                        if (flips.length > 0) moves.push({r, c, flips});
+                    }
+                }
+            }
+            return moves;
+        }
+
+        function getFlipTargets(r, c, color) {
+            const directions = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+            let total = [];
+            directions.forEach(([dr, dc]) => {
+                let currR = r + dr, currC = c + dc, temp = [];
+                while (currR >= 0 && currR < 8 && currC >= 0 && currC < 8) {
+                    if (board[currR][currC] === 0) break;
+                    if (board[currR][currC] === color) { total = total.concat(temp); break; }
+                    temp.push([currR, currC]);
+                    currR += dr; currC += dc;
+                }
+            });
+            return total;
+        }
+
+        initGame();
+    </script>
+</body>
+</html>
